@@ -1,4 +1,4 @@
- <!DOCTYPE html>
+  <!DOCTYPE html>
  <html lang="pt-BR">
  <head>
      <meta charset="UTF-8">
@@ -141,6 +141,90 @@
              background-color: #f44336; /* Vermelho para erro */
          }
 
+         #imageHistory {
+             margin-top: 30px;
+             width: 100%;
+             max-width: 900px;
+             background-color: #f8fafc;
+             border-radius: 15px;
+             padding: 20px;
+             box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.05);
+         }
+         #imageHistory h2 {
+             font-size: 1.8rem;
+             color: #4a5568;
+             margin-bottom: 15px;
+             text-align: center;
+         }
+         #historyList {
+             display: flex;
+             flex-wrap: wrap;
+             gap: 15px;
+             justify-content: center;
+         }
+         .history-item {
+             width: 120px;
+             height: 90px;
+             border: 2px solid #e2e8f0;
+             border-radius: 8px;
+             overflow: hidden;
+             cursor: pointer;
+             transition: all 0.2s ease-in-out;
+             box-shadow: 0 2px 5px rgba(0, 0, 0, 0.08);
+             position: relative;
+         }
+         .history-item:hover {
+             transform: translateY(-2px) scale(1.05);
+             box-shadow: 0 5px 12px rgba(0, 0, 0, 0.15);
+             border-color: #63b3ed;
+         }
+         .history-item img {
+             width: 100%;
+             height: 100%;
+             object-fit: cover;
+             display: block;
+         }
+         .history-item .overlay {
+             position: absolute;
+             top: 0;
+             left: 0;
+             width: 100%;
+             height: 100%;
+             background-color: rgba(0, 0, 0, 0.5);
+             color: white;
+             display: flex;
+             justify-content: center;
+             align-items: center;
+             font-size: 0.8em;
+             text-align: center;
+             opacity: 0;
+             transition: opacity 0.2s ease-in-out;
+         }
+         .history-item:hover .overlay {
+             opacity: 1;
+         }
+         #userIdDisplay {
+             margin-top: 20px;
+             font-size: 0.9em;
+             color: #718096;
+             text-align: center;
+             width: 100%;
+             word-break: break-all; /* Quebra a palavra se for muito longa */
+         }
+         #timerDisplay {
+            font-size: 1.8rem;
+            font-weight: bold;
+            color: #2d3748;
+            margin-bottom: 15px;
+            text-align: center;
+            width: 100%;
+            padding: 10px;
+            background-color: #f0f4f8;
+            border-radius: 10px;
+            box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
+         }
+
+
          /* Estilos responsivos para mobile */
          @media (max-width: 768px) {
              body {
@@ -180,6 +264,20 @@
                  align-items: stretch;
                  gap: 10px;
              }
+             #imageHistory {
+                 padding: 15px;
+             }
+             #imageHistory h2 {
+                 font-size: 1.5rem;
+             }
+             .history-item {
+                 width: 100px;
+                 height: 75px;
+             }
+             #timerDisplay {
+                font-size: 1.4rem;
+                padding: 8px;
+             }
          }
      </style>
  </head>
@@ -204,14 +302,29 @@
              <input type="number" id="rowsInput" value="3" min="2" max="10" class="w-20 text-center">
              <label for="colsInput" class="font-bold text-gray-700">Colunas:</label>
              <input type="number" id="colsInput" value="3" min="2" max="10" class="w-20 text-center">
+             <label for="timeInput" class="font-bold text-gray-700">Tempo (minutos):</label>
+             <input type="number" id="timeInput" value="5" min="1" max="10" class="w-24 text-center">
              <button id="startGameBtn" class="bg-blue-500 text-white">Iniciar Quebra-Cabeça</button>
          </div>
 
+         <div id="timerDisplay">Tempo: 00:00</div>
+
          <canvas id="canvas"></canvas>
          <canvas id="previewCanvas"></canvas>
+
+         <div id="imageHistory">
+             <h2>Imagens Recentes</h2>
+             <div id="historyList">
+                 </div>
+         </div>
+         <div id="userIdDisplay" class="text-gray-600 mt-4"></div>
      </div>
 
-     <script>
+     <script type="module">
+         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+         import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
          const canvas = document.getElementById('canvas');
          const ctx = canvas.getContext('2d');
          const previewCanvas = document.getElementById('previewCanvas');
@@ -221,7 +334,11 @@
          const loadImageFromUrlBtn = document.getElementById('loadImageFromUrlBtn');
          const rowsInput = document.getElementById('rowsInput');
          const colsInput = document.getElementById('colsInput');
+         const timeInput = document.getElementById('timeInput'); // New time input
          const startGameBtn = document.getElementById('startGameBtn');
+         const historyList = document.getElementById('historyList');
+         const userIdDisplay = document.getElementById('userIdDisplay');
+         const timerDisplay = document.getElementById('timerDisplay');
 
          let puzzleImage = null; // A imagem carregada para o quebra-cabeça
          let puzzlePieces = []; // Array para armazenar as peças do quebra-cabeça
@@ -245,55 +362,102 @@
              offsetY: 0
          };
 
-         // Função para exibir mensagens na tela (sucesso/erro)
+         // Timer variables
+         let timerInterval = null;
+         let timeRemaining = 0; // Tempo em segundos
+         let gameActive = false; // Estado do jogo (ativo para interação)
+
+         // Firebase Initialization
+         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+         const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+         const app = initializeApp(firebaseConfig);
+         const db = getFirestore(app);
+         const auth = getAuth(app);
+
+         let currentUserId = null;
+
+         // Function to display messages on the screen (success/error)
          function showMessage(message, type = 'success') {
              const messageBox = document.createElement('div');
              messageBox.className = `message-box ${type}`;
              messageBox.textContent = message;
              document.body.appendChild(messageBox);
 
-             // Força um reflow para garantir que a transição CSS funcione
+             // Force a reflow to ensure CSS transition works
              messageBox.offsetWidth;
-             messageBox.classList.add('show'); // Adiciona a classe para iniciar a transição de fade-in
+             messageBox.classList.add('show'); // Add class to start fade-in transition
 
              setTimeout(() => {
-                 messageBox.classList.remove('show'); // Remove a classe para iniciar a transição de fade-out
+                 messageBox.classList.remove('show'); // Remove class to start fade-out transition
                  messageBox.addEventListener('transitionend', () => {
-                     messageBox.remove(); // Remove o elemento do DOM após a transição
-                 }, { once: true }); // Garante que o listener seja removido após uma execução
+                     messageBox.remove(); // Remove element from DOM after transition
+                 }, { once: true }); // Ensure listener is removed after one execution
              }, 3000);
          }
 
-         // Função para ajustar o tamanho do canvas principal e da prévia para ser responsivo
+         // Function to format time for display
+         function formatTime(seconds) {
+             const minutes = Math.floor(seconds / 60);
+             const remainingSeconds = seconds % 60;
+             const formattedMinutes = String(minutes).padStart(2, '0');
+             const formattedSeconds = String(remainingSeconds).padStart(2, '0');
+             return `${formattedMinutes}:${formattedSeconds}`;
+         }
+
+         // Function to start the timer
+         function startTimer(durationInSeconds) {
+             if (timerInterval) {
+                 clearInterval(timerInterval);
+             }
+             timeRemaining = durationInSeconds;
+             timerDisplay.textContent = `Tempo: ${formatTime(timeRemaining)}`;
+             timerInterval = setInterval(() => {
+                 timeRemaining--;
+                 timerDisplay.textContent = `Tempo: ${formatTime(timeRemaining)}`;
+                 if (timeRemaining <= 0) {
+                     clearInterval(timerInterval);
+                     gameActive = false; // Disable interaction
+                     showMessage('Tempo Esgotado! O quebra-cabeça foi bloqueado.', 'error');
+                     drawPuzzle(); // Redraw to remove active piece border if dragging
+                 }
+             }, 1000);
+         }
+
+         // Function to adjust the size of the main canvas and preview to be responsive
          function resizeCanvas() {
              const rect = canvas.getBoundingClientRect();
              canvas.width = rect.width;
              canvas.height = rect.height;
-             ctx.imageSmoothingEnabled = true; // Garante suavização de imagem
-             drawPuzzle(); // Redesenha o quebra-cabeça após o redimensionamento
-             drawPreview(); // Redesenha a prévia também
+             ctx.imageSmoothingEnabled = true; // Ensure image smoothing is enabled
+             drawPuzzle(); // Redraw the puzzle after resizing
+             drawPreview(); // Redraw the preview as well
          }
 
-         // Inicializa o canvas e ajusta o tamanho
+         // Initialize canvas and adjust size
          window.addEventListener('load', () => {
              resizeCanvas();
          });
 
-         // Adiciona um listener para redimensionar o canvas quando a janela for redimensionada
+         // Add a listener to resize the canvas when the window is resized
          window.addEventListener('resize', resizeCanvas);
 
-         // Função para carregar uma imagem
-         function loadImage(src) {
+         // Function to load an image
+         function loadImage(src, fromHistory = false) {
              return new Promise((resolve, reject) => {
                  const img = new Image();
-                 img.crossOrigin = 'Anonymous'; // Importante para evitar problemas de CORS
+                 img.crossOrigin = 'Anonymous'; // Important to avoid CORS issues
                  img.onload = () => {
                      puzzleImage = img;
-                     showMessage('Imagem carregada com sucesso!', 'success');
-                     // Limpa o canvas e desenha a imagem completa para visualização
+                     if (!fromHistory) { // Only show success message and save to history if not loaded from history
+                         showMessage('Imagem carregada com sucesso!', 'success');
+                         saveImageToHistory(src);
+                     }
+                     // Clear the canvas and draw the full image for visualization
                      ctx.clearRect(0, 0, canvas.width, canvas.height);
                      drawFullImage(img);
-                     drawPreview(); // Desenha a prévia após carregar a imagem
+                     drawPreview(); // Draw the preview after loading the image
                      resolve(img);
                  };
                  img.onerror = () => {
@@ -305,7 +469,7 @@
              });
          }
 
-         // Desenha a imagem completa no canvas, ajustando para caber (CONTAIN logic)
+         // Draw the full image on the canvas, adjusting to fit (CONTAIN logic)
          function drawFullImage(img, targetCtx = ctx) {
              targetCtx.clearRect(0, 0, targetCtx.canvas.width, targetCtx.canvas.height);
              let imgWidth = img.width;
@@ -315,12 +479,12 @@
 
              let scale;
              if (imgAspectRatio > canvasAspectRatio) {
-                 // Imagem é mais larga em relação à sua altura do que o canvas
-                 // Escala baseada na largura para caber horizontalmente
+                 // Image is wider in relation to its height than the canvas
+                 // Scale based on width to fit horizontally
                  scale = targetCtx.canvas.width / imgWidth;
              } else {
-                 // Imagem é mais alta em relação à sua largura do que o canvas
-                 // Escala baseada na altura para caber verticalmente
+                 // Image is taller in relation to its width than the canvas
+                 // Scale based on height to fit vertically
                  scale = targetCtx.canvas.height / imgHeight;
              }
 
@@ -331,7 +495,7 @@
 
              targetCtx.drawImage(img, offsetX, offsetY, drawWidth, drawHeight);
 
-             // Se estiver desenhando no canvas principal, armazena as dimensões e offsets
+             // If drawing on the main canvas, store the dimensions and offsets
              if (targetCtx === ctx) {
                  drawnImage.width = drawWidth;
                  drawnImage.height = drawHeight;
@@ -340,10 +504,10 @@
              }
          }
 
-         // Função para desenhar a grade sobre a imagem em um contexto específico
+         // Function to draw the grid over the image on a specific context
          function drawGridOnContext(context, currentRows, currentCols, currentPieceWidth, currentPieceHeight, offsetX = 0, offsetY = 0, totalWidth, totalHeight) {
-             context.strokeStyle = '#000000'; // Cor da grade (preto)
-             context.lineWidth = 1; // Espessura da linha da grade
+             context.strokeStyle = '#000000'; // Grid color (black)
+             context.lineWidth = 1; // Grid line thickness
 
              for (let r = 0; r <= currentRows; r++) {
                  context.beginPath();
@@ -360,7 +524,7 @@
              }
          }
 
-         // Função para desenhar a imagem dividida na prévia
+         // Function to draw the divided image in the preview
          function drawPreview() {
              if (puzzleImage) {
                  const previewRows = parseInt(rowsInput.value);
@@ -376,9 +540,9 @@
              }
          }
 
-         // Event listener para carregar imagem do computador
+         // Event listener for loading image from computer
          imageUpload.addEventListener('change', (e) => {
-             const file = e.target.files && e.target.files.length > 0 ? e.target.files [0] : null;
+             const file = e.target.files && e.target.files.length > 0 ? e.target.files[0] : null;
              if (file) {
                  const reader = new FileReader();
                  reader.onload = (event) => {
@@ -388,7 +552,7 @@
              }
          });
 
-         // Event listener para carregar imagem de URL
+         // Event listener for loading image from URL
          loadImageFromUrlBtn.addEventListener('click', () => {
              const imageUrl = imageUrlInput.value.trim();
              if (imageUrl) {
@@ -398,7 +562,7 @@
              }
          });
 
-         // Função para criar as peças do quebra-cabeça
+         // Function to create puzzle pieces
          function createPuzzlePieces() {
              if (!puzzleImage) {
                  showMessage('Por favor, carregue uma imagem primeiro!', 'error');
@@ -407,147 +571,158 @@
 
              rows = parseInt(rowsInput.value);
              cols = parseInt(colsInput.value);
+             let selectedTimeMinutes = parseInt(timeInput.value); // Get time in minutes
 
              if (isNaN(rows) || isNaN(cols) || rows < 2 || cols < 2) {
                  showMessage('Número de linhas e colunas deve ser no mínimo 2.', 'error');
                  return;
              }
+             if (isNaN(selectedTimeMinutes) || selectedTimeMinutes < 1) { // Min 1 minute
+                 showMessage('O tempo deve ser um número válido (mínimo 1 minuto).', 'error');
+                 return;
+             }
+             let selectedTimeSeconds = selectedTimeMinutes * 60; // Convert to seconds
 
-             // Calcula o tamanho de cada peça com base nas dimensões da imagem desenhada
+
+             // Calculate the size of each piece based on the drawn image dimensions
              pieceWidth = drawnImage.width / cols;
              pieceHeight = drawnImage.height / rows;
 
-             // 1. Desenha a imagem completa no canvas principal (já atualiza drawnImage)
+             // 1. Draw the full image on the main canvas (already updates drawnImage)
              drawFullImage(puzzleImage);
-             // 2. Desenha a grade sobre a imagem completa
+             // 2. Draw the grid over the full image
              drawGridOnContext(ctx, rows, cols, pieceWidth, pieceHeight, drawnImage.offsetX, drawnImage.offsetY, drawnImage.width, drawnImage.height);
-             // 3. Desenha a prévia
+             // 3. Draw the preview
              drawPreview();
 
-             // Pequeno atraso para a criança ver a imagem com a grade antes de embaralhar
+             // Small delay for the child to see the image with the grid before shuffling
              setTimeout(() => {
                  puzzlePieces = [];
-                 // Cria um canvas temporário para cortar as peças com suavização
+                 // Create a temporary canvas to cut the pieces with smoothing
                  const tempCanvas = document.createElement('canvas');
                  const tempCtx = tempCanvas.getContext('2d');
                  tempCtx.imageSmoothingEnabled = true;
 
-                 // Ajusta o tamanho do canvas temporário para as dimensões da imagem desenhada
+                 // Adjust the size of the temporary canvas to the dimensions of the drawn image
                  tempCanvas.width = drawnImage.width;
                  tempCanvas.height = drawnImage.height;
 
-                 // Desenha apenas o conteúdo da imagem no tempCanvas, sem offsets
+                 // Draw only the image content on the tempCanvas, without offsets
                  tempCtx.drawImage(puzzleImage, 0, 0, drawnImage.width, drawnImage.height);
 
 
-                 // Corta as peças do tempCanvas
+                 // Cut the pieces from the tempCanvas
                  for (let r = 0; r < rows; r++) {
                      for (let c = 0; c < cols; c++) {
                          const x = c * pieceWidth;
                          const y = r * pieceHeight;
 
-                         // Obtém os dados da imagem para esta peça do tempCanvas
+                         // Get the image data for this piece from the tempCanvas
                          const pieceImageData = tempCtx.getImageData(x, y, pieceWidth, pieceHeight);
 
                          puzzlePieces.push({
                              imageData: pieceImageData,
                              originalRow: r,
                              originalCol: c,
-                             currentRow: r, // Posição inicial (para embaralhar depois)
+                             currentRow: r, // Initial position (for shuffling later)
                              currentCol: c,
-                             // Posição de desenho inicial no canvas principal, considerando o offset da imagem
+                             // Initial drawing position on the main canvas, considering the image offset
                              x: drawnImage.offsetX + (c * pieceWidth),
                              y: drawnImage.offsetY + (r * pieceHeight)
                          });
                      }
                  }
 
-                 shufflePieces(); // Embaralha as peças
-                 drawPuzzle(); // Desenha o quebra-cabeça embaralhado
+                 shufflePieces(); // Shuffle the pieces
+                 drawPuzzle(); // Draw the shuffled puzzle
                  showMessage('Quebra-cabeça iniciado! Arraste as peças para montar.', 'success');
-             }, 500); // Atraso de 0.5 segundos para visualização
+                 gameActive = true; // Enable game interaction
+                 startTimer(selectedTimeSeconds); // Start timer with user-selected time in seconds
+             }, 500); // 0.5 second delay for visualization
          }
 
-         // Função para embaralhar as peças do quebra-cabeça
+         // Function to shuffle puzzle pieces
          function shufflePieces() {
              for (let i = puzzlePieces.length - 1; i > 0; i--) {
                  const j = Math.floor(Math.random() * (i + 1));
-                 const temp = puzzlePieces [i];
-                 puzzlePieces [i] = puzzlePieces [j];
-                 puzzlePieces [j] = temp;
+                 const temp = puzzlePieces[i];
+                 puzzlePieces[i] = puzzlePieces[j];
+                 puzzlePieces[j] = temp;
              }
 
-             // Atualiza as posições atuais das peças após embaralhar
+             // Update current positions of pieces after shuffling
              puzzlePieces.forEach((piece, index) => {
                  piece.currentRow = Math.floor(index / cols);
                  piece.currentCol = index % cols;
-                 // Atualiza x, y com base nas novas currentRow/Col e offsets da imagem desenhada
+                 // Update x, y based on new currentRow/Col and drawn image offsets
                  piece.x = drawnImage.offsetX + (piece.currentCol * pieceWidth);
                  piece.y = drawnImage.offsetY + (piece.currentRow * pieceHeight);
              });
          }
 
-         // Função para desenhar todas as peças no canvas
+         // Function to draw all pieces on the canvas
          function drawPuzzle() {
-             ctx.clearRect(0, 0, canvas.width, canvas.height); // Limpa o canvas
+             ctx.clearRect(0, 0, canvas.width, canvas.height); // Clear the canvas
 
              if (!puzzleImage) {
-                 // Se nenhuma imagem foi carregada, apenas limpa o canvas
+                 // If no image is loaded, just clear the canvas
                  return;
              }
 
              if (puzzlePieces.length === 0) {
-                 // Se a imagem foi carregada mas o quebra-cabeça não foi iniciado, desenha a imagem completa
+                 // If the image is loaded but the puzzle has not started, draw the full image
                  drawFullImage(puzzleImage);
                  return;
              }
 
              puzzlePieces.forEach(piece => {
-                 // Desenha a peça somente se os dados da imagem estiverem definidos
+                 // Draw the piece only if image data is defined
                  if (piece.imageData) {
                      ctx.putImageData(piece.imageData, piece.x, piece.y);
 
-                     // Desenha uma borda para cada peça (opcional, para visualização)
+                     // Draw a border for each piece (optional, for visualization)
                      ctx.strokeStyle = '#ccc';
                      ctx.lineWidth = 1;
                      ctx.strokeRect(piece.x, piece.y, pieceWidth, pieceHeight);
                  }
              });
 
-             // Se estiver arrastando, desenha a peça arrastada por cima para visibilidade
-             if (draggingPiece && draggingPiece.imageData) { // Também verifica se draggingPiece.imageData está definido
+             // If dragging, draw the dragged piece on top for visibility
+             if (draggingPiece && draggingPiece.imageData) { // Also check if draggingPiece.imageData is defined
                  ctx.putImageData(draggingPiece.imageData, draggingPiece.x, draggingPiece.y);
-                 ctx.strokeStyle = '#3b82f6'; // Borda azul para a peça arrastada
+                 ctx.strokeStyle = '#3b82f6'; // Blue border for the dragged piece
                  ctx.lineWidth = 2;
                  ctx.strokeRect(draggingPiece.x, draggingPiece.y, pieceWidth, pieceHeight);
              }
          }
 
-         // Event listener para iniciar o jogo
+         // Event listener to start the game
          startGameBtn.addEventListener('click', createPuzzlePieces);
 
-         // --- Lógica de Arrastar e Soltar ---
+         // --- Drag and Drop Logic ---
          function getPieceAtMouse(e) {
+             if (!gameActive) return null; // Prevent interaction if game is not active
+
              const rect = canvas.getBoundingClientRect();
-             // Acessa clientX/Y diretamente ou verifica e.touches.length antes de acessar e.touches[0]
+             // Access clientX/Y directly or check e.touches.length before accessing e.touches[0]
              const clientX = e.clientX || (e.touches && e.touches.length > 0 ? e.touches[0].clientX : 0);
              const clientY = e.clientY || (e.touches && e.touches.length > 0 ? e.touches[0].clientY : 0);
 
              const mouseX = clientX - rect.left;
              const mouseY = clientY - rect.top;
 
-             // Ajusta as coordenadas do mouse em relação à área da imagem desenhada
+             // Adjust mouse coordinates relative to the drawn image area
              const relativeX = mouseX - drawnImage.offsetX;
              const relativeY = mouseY - drawnImage.offsetY;
 
-             // Verifica se o clique está dentro da área do quebra-cabeça
+             // Check if the click is within the puzzle area
              if (relativeX < 0 || relativeX >= drawnImage.width || relativeY < 0 || relativeY >= drawnImage.height) {
-                 return null; // Clique fora da área do quebra-cabeça
+                 return null; // Click outside the puzzle area
              }
 
              for (let i = 0; i < puzzlePieces.length; i++) {
-                 const piece = puzzlePieces [i];
-                 // Verifica a posição atual de desenho da peça
+                 const piece = puzzlePieces[i];
+                 // Check the current drawing position of the piece
                  if (mouseX >= piece.x && mouseX < piece.x + pieceWidth &&
                      mouseY >= piece.y && mouseY < piece.y + pieceHeight) {
                      return { piece: piece, index: i };
@@ -557,6 +732,7 @@
          }
 
          canvas.addEventListener('mousedown', (e) => {
+             if (!gameActive) return;
              const result = getPieceAtMouse(e);
              if (result) {
                  draggingPiece = result.piece;
@@ -565,11 +741,12 @@
                  startMouseY = e.clientY || (e.touches && e.touches.length > 0 ? e.touches[0].clientY : 0);
                  initialPieceX = draggingPiece.x;
                  initialPieceY = draggingPiece.y;
-                 canvas.style.cursor = 'grabbing'; // Altera o cursor
+                 canvas.style.cursor = 'grabbing'; // Change cursor
              }
          });
 
          canvas.addEventListener('mousemove', (e) => {
+             if (!gameActive) return;
              if (draggingPiece) {
                  const currentMouseX = e.clientX || (e.touches && e.touches.length > 0 ? e.touches[0].clientX : 0);
                  const currentMouseY = e.clientY || (e.touches && e.touches.length > 0 ? e.touches[0].clientY : 0);
@@ -581,38 +758,39 @@
          });
 
          canvas.addEventListener('mouseup', (e) => {
+             if (!gameActive) return;
              if (draggingPiece) {
-                 canvas.style.cursor = 'grab'; // Restaura o cursor
+                 canvas.style.cursor = 'grab'; // Restore cursor
 
                  const rect = canvas.getBoundingClientRect();
                  const dropX = (e.clientX || (e.changedTouches && e.changedTouches.length > 0 ? e.changedTouches[0].clientX : 0)) - rect.left;
                  const dropY = (e.clientY || (e.changedTouches && e.changedTouches.length > 0 ? e.changedTouches[0].clientY : 0)) - rect.top;
 
-                 // Calcula a posição alvo em relação à área da imagem desenhada
+                 // Calculate the target position relative to the drawn image area
                  const relativeDropX = dropX - drawnImage.offsetX;
                  const relativeDropY = dropY - drawnImage.offsetY;
 
-                 // Calcula a célula alvo com base nas coordenadas relativas
+                 // Calculate the target cell based on relative coordinates
                  const targetCol = Math.floor(relativeDropX / pieceWidth);
                  const targetRow = Math.floor(relativeDropY / pieceHeight);
 
-                 // Garante que a célula alvo esteja dentro dos limites
+                 // Ensure the target cell is within bounds
                  const finalCol = Math.max(0, Math.min(cols - 1, targetCol));
                  const finalRow = Math.max(0, Math.min(rows - 1, targetRow));
 
-                 // Encontra a peça que está na célula alvo
+                 // Find the piece that is in the target cell
                  let targetPiece = null;
                  let targetPieceIndex = -1;
                  for (let i = 0; i < puzzlePieces.length; i++) {
-                     if (puzzlePieces [i].currentRow === finalRow && puzzlePieces [i].currentCol === finalCol) {
-                         targetPiece = puzzlePieces [i];
+                     if (puzzlePieces[i].currentRow === finalRow && puzzlePieces[i].currentCol === finalCol) {
+                         targetPiece = puzzlePieces[i];
                          targetPieceIndex = i;
                          break;
                      }
                  }
 
                  if (targetPiece && targetPiece !== draggingPiece) {
-                     // Troca as posições lógicas (currentRow, currentCol)
+                     // Swap logical positions (currentRow, currentCol)
                      const tempRow = draggingPiece.currentRow;
                      const tempCol = draggingPiece.currentCol;
 
@@ -621,18 +799,18 @@
                      targetPiece.currentRow = tempRow;
                      targetPiece.currentCol = tempCol;
 
-                     // Troca as peças no array para manter a ordem lógica
-                     puzzlePieces [draggingPieceIndex] = targetPiece;
-                     puzzlePieces [targetPieceIndex] = draggingPiece;
+                     // Swap pieces in the array to maintain logical order
+                     puzzlePieces[draggingPieceIndex] = targetPiece;
+                     puzzlePieces[targetPieceIndex] = draggingPiece;
 
-                     // Atualiza as posições de desenho (x, y) para ambas as peças
+                     // Update drawing positions (x, y) for both pieces
                      draggingPiece.x = drawnImage.offsetX + (draggingPiece.currentCol * pieceWidth);
                      draggingPiece.y = drawnImage.offsetY + (draggingPiece.currentRow * pieceHeight);
                      targetPiece.x = drawnImage.offsetX + (targetPiece.currentCol * pieceWidth);
                      targetPiece.y = drawnImage.offsetY + (targetPiece.currentRow * pieceHeight);
 
                  } else {
-                     // Se não houver peça alvo ou for a própria peça, apenas ajusta a posição
+                     // If no target piece or it's the same piece, just adjust the position
                      draggingPiece.currentRow = finalRow;
                      draggingPiece.currentCol = finalCol;
                      draggingPiece.x = drawnImage.offsetX + (finalCol * pieceWidth);
@@ -647,8 +825,9 @@
          });
 
          canvas.addEventListener('mouseout', () => {
+             if (!gameActive) return;
              if (draggingPiece) {
-                 // Se o mouse sair do canvas enquanto arrasta, solta a peça na posição atual
+                 // If the mouse leaves the canvas while dragging, drop the piece at the current position
                  canvas.style.cursor = 'grab';
                  draggingPiece = null;
                  draggingPieceIndex = -1;
@@ -656,25 +835,27 @@
              }
          });
 
-         // --- Lógica Touch para Arrastar e Soltar ---
+         // --- Touch Logic for Drag and Drop ---
          canvas.addEventListener('touchstart', (e) => {
-             e.preventDefault(); // Previne o scroll da página
+             if (!gameActive) return;
+             e.preventDefault(); // Prevent page scroll
              const result = getPieceAtMouse(e);
              if (result) {
                  draggingPiece = result.piece;
                  draggingPieceIndex = result.index;
-                 startMouseX = e.touches [0].clientX;
-                 startMouseY = e.touches [0].clientY;
+                 startMouseX = e.touches[0].clientX;
+                 startMouseY = e.touches[0].clientY;
                  initialPieceX = draggingPiece.x;
                  initialPieceY = draggingPiece.y;
              }
          }, { passive: false });
 
          canvas.addEventListener('touchmove', (e) => {
-             e.preventDefault(); // Previne o scroll da página
+             if (!gameActive) return;
+             e.preventDefault(); // Prevent page scroll
              if (draggingPiece) {
-                 const currentMouseX = e.touches [0].clientX;
-                 const currentMouseY = e.touches [0].clientY;
+                 const currentMouseX = e.touches[0].clientX;
+                 const currentMouseY = e.touches[0].clientY;
 
                  draggingPiece.x = initialPieceX + (currentMouseX - startMouseX);
                  draggingPiece.y = initialPieceY + (currentMouseY - startMouseY);
@@ -683,10 +864,11 @@
          }, { passive: false });
 
          canvas.addEventListener('touchend', (e) => {
+             if (!gameActive) return;
              if (draggingPiece) {
                  const rect = canvas.getBoundingClientRect();
-                 const dropX = e.changedTouches [0].clientX - rect.left;
-                 const dropY = e.changedTouches [0].clientY - rect.top;
+                 const dropX = e.changedTouches[0].clientX - rect.left;
+                 const dropY = e.changedTouches[0].clientY - rect.top;
 
                  const relativeDropX = dropX - drawnImage.offsetX;
                  const relativeDropY = dropY - drawnImage.offsetY;
@@ -700,8 +882,8 @@
                  let targetPiece = null;
                  let targetPieceIndex = -1;
                  for (let i = 0; i < puzzlePieces.length; i++) {
-                     if (puzzlePieces [i].currentRow === finalRow && puzzlePieces [i].currentCol === finalCol) {
-                         targetPiece = puzzlePieces [i];
+                     if (puzzlePieces[i].currentRow === finalRow && puzzlePieces[i].currentCol === finalCol) {
+                         targetPiece = puzzlePieces[i];
                          targetPieceIndex = i;
                          break;
                      }
@@ -716,8 +898,8 @@
                      targetPiece.currentRow = tempRow;
                      targetPiece.currentCol = tempCol;
 
-                     puzzlePieces [draggingPieceIndex] = targetPiece;
-                     puzzlePieces [targetPieceIndex] = draggingPiece;
+                     puzzlePieces[draggingPieceIndex] = targetPiece;
+                     puzzlePieces[targetPieceIndex] = draggingPiece;
 
                      draggingPiece.x = drawnImage.offsetX + (draggingPiece.currentCol * pieceWidth);
                      draggingPiece.y = drawnImage.offsetY + (draggingPiece.currentRow * pieceHeight);
@@ -738,17 +920,95 @@
              }
          });
 
-         // Função para verificar se o quebra-cabeça está completo
+         // Function to check if the puzzle is complete
          function checkCompletion() {
              const isComplete = puzzlePieces.every(piece =>
                  piece.currentRow === piece.originalRow && piece.currentCol === piece.originalCol
              );
 
              if (isComplete) {
-                 // Desenha a imagem completa sem as bordas das peças ao concluir
+                 // Draw the full image without piece borders upon completion
                  drawFullImage(puzzleImage);
                  showMessage('Parabéns! Você montou o quebra-cabeça!', 'success');
+                 clearInterval(timerInterval); // Stop the timer on completion
+                 gameActive = false; // Disable further interaction
              }
+         }
+
+         // --- Firebase Logic ---
+         // Listen for authentication state changes
+         onAuthStateChanged(auth, async (user) => {
+             if (user) {
+                 currentUserId = user.uid;
+                 console.log("Usuário autenticado:", currentUserId);
+                 userIdDisplay.textContent = `ID do Usuário: ${currentUserId}`;
+                 // Now that we have a user, load the image history
+                 loadImageHistory();
+             } else {
+                 try {
+                     if (initialAuthToken) {
+                         await signInWithCustomToken(auth, initialAuthToken);
+                     } else {
+                         await signInAnonymously(auth);
+                     }
+                 } catch (error) {
+                     console.error("Erro ao autenticar no Firebase:", error);
+                     // Fallback if anonymous sign-in also fails (e.g., no internet)
+                     currentUserId = crypto.randomUUID(); // Use a random ID if auth fails
+                     userIdDisplay.textContent = `ID do Usuário (offline): ${currentUserId}`;
+                     showMessage('Erro ao conectar ao Firebase. Histórico de imagens pode não ser salvo.', 'error');
+                 }
+             }
+         });
+
+         // Function to save image URL/dataURL to Firestore
+         async function saveImageToHistory(imageUrl) {
+             if (!currentUserId) {
+                 console.warn("Usuário não autenticado. Não é possível salvar o histórico de imagens.");
+                 return;
+             }
+             try {
+                 const imageHistoryRef = collection(db, `artifacts/${appId}/users/${currentUserId}/imageHistory`);
+                 await addDoc(imageHistoryRef, {
+                     imageUrl: imageUrl,
+                     timestamp: serverTimestamp() // Use serverTimestamp for consistent time
+                 });
+                 console.log("Imagem salva no histórico com sucesso!");
+             } catch (e) {
+                 console.error("Erro ao adicionar documento: ", e);
+                 showMessage('Erro ao salvar imagem no histórico.', 'error');
+             }
+         }
+
+         // Function to load image history from Firestore
+         function loadImageHistory() {
+             if (!currentUserId) {
+                 console.warn("Usuário não autenticado. Não é possível carregar o histórico de imagens.");
+                 return;
+             }
+
+             const imageHistoryRef = collection(db, `artifacts/${appId}/users/${currentUserId}/imageHistory`);
+             const q = query(imageHistoryRef, orderBy("timestamp", "desc")); // Order by most recent
+
+             onSnapshot(q, (snapshot) => {
+                 historyList.innerHTML = ''; // Clear current history list
+                 snapshot.forEach((doc) => {
+                     const imageData = doc.data();
+                     const imageUrl = imageData.imageUrl;
+
+                     const historyItem = document.createElement('div');
+                     historyItem.className = 'history-item';
+                     historyItem.innerHTML = `<img src="${imageUrl}" alt="Imagem do Histórico" onerror="this.src='https://placehold.co/120x90/cccccc/333333?text=Erro'">
+                                              <div class="overlay">Carregar</div>`;
+                     historyItem.addEventListener('click', () => {
+                         loadImage(imageUrl, true); // Load image from history, prevent saving again
+                     });
+                     historyList.appendChild(historyItem);
+                 });
+             }, (error) => {
+                 console.error("Erro ao carregar histórico de imagens: ", error);
+                 showMessage('Erro ao carregar histórico de imagens.', 'error');
+             });
          }
      </script>
  </body>
