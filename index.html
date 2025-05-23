@@ -1,4 +1,4 @@
- <!DOCTYPE html>
+  <!DOCTYPE html>
  <html lang="pt-BR">
  <head>
      <meta charset="UTF-8">
@@ -118,6 +118,10 @@
              justify-content: center;
          }
          .message-box {
+             position: fixed;
+             top: 50%;
+             left: 50%;
+             transform: translate(-50%, -50%);
              background-color: #4CAF50; /* Verde para sucesso */
              color: white;
              padding: 20px 30px; /* Padding maior */
@@ -125,6 +129,13 @@
              box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
              font-size: 1.4em; /* Fonte maior */
              font-weight: bold;
+             z-index: 1000;
+             text-align: center;
+             opacity: 0; /* Começa invisível */
+             transition: opacity 0.5s ease-in-out; /* Transição para fade */
+         }
+         .message-box.show {
+             opacity: 1; /* Torna visível */
          }
          .message-box.error {
              background-color: #f44336; /* Vermelho para erro */
@@ -240,9 +251,17 @@
              messageBox.className = `message-box ${type}`;
              messageBox.textContent = message;
              document.body.appendChild(messageBox);
+
+             // Força um reflow para garantir que a transição CSS funcione
+             messageBox.offsetWidth;
+             messageBox.classList.add('show'); // Adiciona a classe para iniciar a transição de fade-in
+
              setTimeout(() => {
-                 messageBox.remove();
-             }, 3000); // Remove a mensagem após 3 segundos
+                 messageBox.classList.remove('show'); // Remove a classe para iniciar a transição de fade-out
+                 messageBox.addEventListener('transitionend', () => {
+                     messageBox.remove(); // Remove o elemento do DOM após a transição
+                 }, { once: true }); // Garante que o listener seja removido após uma execução
+             }, 3000);
          }
 
          // Função para ajustar o tamanho do canvas principal e da prévia para ser responsivo
@@ -510,8 +529,12 @@
          // --- Lógica de Arrastar e Soltar ---
          function getPieceAtMouse(e) {
              const rect = canvas.getBoundingClientRect();
-             const mouseX = (e.clientX || (e.touches && e.touches [0] ? e.touches [0].clientX : 0)) - rect.left;
-             const mouseY = (e.clientY || (e.touches && e.touches [0] ? e.touches [0].clientY : 0)) - rect.top;
+             // Acessa clientX/Y diretamente ou verifica e.touches.length antes de acessar e.touches[0]
+             const clientX = e.clientX || (e.touches && e.touches.length > 0 ? e.touches[0].clientX : 0);
+             const clientY = e.clientY || (e.touches && e.touches.length > 0 ? e.touches[0].clientY : 0);
+
+             const mouseX = clientX - rect.left;
+             const mouseY = clientY - rect.top;
 
              // Ajusta as coordenadas do mouse em relação à área da imagem desenhada
              const relativeX = mouseX - drawnImage.offsetX;
@@ -538,8 +561,8 @@
              if (result) {
                  draggingPiece = result.piece;
                  draggingPieceIndex = result.index;
-                 startMouseX = e.clientX || (e.touches && e.touches [0] ? e.touches [0].clientX : 0);
-                 startMouseY = e.clientY || (e.touches && e.touches [0] ? e.touches [0].clientY : 0);
+                 startMouseX = e.clientX || (e.touches && e.touches.length > 0 ? e.touches[0].clientX : 0);
+                 startMouseY = e.clientY || (e.touches && e.touches.length > 0 ? e.touches[0].clientY : 0);
                  initialPieceX = draggingPiece.x;
                  initialPieceY = draggingPiece.y;
                  canvas.style.cursor = 'grabbing'; // Altera o cursor
@@ -548,8 +571,8 @@
 
          canvas.addEventListener('mousemove', (e) => {
              if (draggingPiece) {
-                 const currentMouseX = e.clientX || (e.touches && e.touches [0] ? e.touches [0].clientX : 0);
-                 const currentMouseY = e.clientY || (e.touches && e.touches [0] ? e.touches [0].clientY : 0);
+                 const currentMouseX = e.clientX || (e.touches && e.touches.length > 0 ? e.touches[0].clientX : 0);
+                 const currentMouseY = e.clientY || (e.touches && e.touches.length > 0 ? e.touches[0].clientY : 0);
 
                  draggingPiece.x = initialPieceX + (currentMouseX - startMouseX);
                  draggingPiece.y = initialPieceY + (currentMouseY - startMouseY);
@@ -562,8 +585,8 @@
                  canvas.style.cursor = 'grab'; // Restaura o cursor
 
                  const rect = canvas.getBoundingClientRect();
-                 const dropX = (e.clientX || (e.changedTouches && e.changedTouches [0] ? e.changedTouches [0].clientX : 0)) - rect.left;
-                 const dropY = (e.clientY || (e.changedTouches && e.changedTouches [0] ? e.changedTouches [0].clientY : 0)) - rect.top;
+                 const dropX = (e.clientX || (e.changedTouches && e.changedTouches.length > 0 ? e.changedTouches[0].clientX : 0)) - rect.left;
+                 const dropY = (e.clientY || (e.changedTouches && e.changedTouches.length > 0 ? e.changedTouches[0].clientY : 0)) - rect.top;
 
                  // Calcula a posição alvo em relação à área da imagem desenhada
                  const relativeDropX = dropX - drawnImage.offsetX;
